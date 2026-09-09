@@ -1,0 +1,38 @@
+Metadata-Version: 2.4
+Name: skyreels-ttnn
+Version: 0.1.0
+Summary: SkyReels-V2-DF-1.3B-540P (T2V) on Tenstorrent Blackhole via TTNN
+Home-page: https://github.com/tenstorrent/tt-skyreels
+Author: Tenstorrent
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Programming Language :: Python :: 3
+Requires-Python: >=3.10
+Requires-Dist: torch>=2.0.0
+Requires-Dist: numpy<3
+Requires-Dist: diffusers<0.41,>=0.32.1
+Requires-Dist: transformers<6,>=4.30.0
+Requires-Dist: accelerate<2,>=0.20.0
+Requires-Dist: safetensors<1,>=0.4.0
+Requires-Dist: sentencepiece
+Requires-Dist: protobuf
+Requires-Dist: imageio<3,>=2.30
+Requires-Dist: imageio-ffmpeg<1,>=0.4
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: httpx>=0.24.0; extra == "dev"
+Requires-Dist: pyyaml; extra == "dev"
+Provides-Extra: serve
+Requires-Dist: fastapi>=0.110.0; extra == "serve"
+Requires-Dist: uvicorn>=0.27.0; extra == "serve"
+Requires-Dist: pydantic>=2.0.0; extra == "serve"
+Dynamic: author
+Dynamic: classifier
+Dynamic: home-page
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
