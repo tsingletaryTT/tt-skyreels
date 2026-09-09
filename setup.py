@@ -53,5 +53,9 @@ setup(
             "uvicorn>=0.27.0",
             "pydantic>=2.0.0",
         ],
+        # app.py, the local Gradio UI (not used by the ASGI/tt-model-manager path).
+        "ui": [
+            "gradio>=4.0.0",
+        ],
     },
 )

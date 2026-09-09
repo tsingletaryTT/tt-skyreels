@@ -131,63 +131,6 @@ def mesh_shape_from_env(env: Optional[dict] = None) -> tuple:
     return (rows, cols)
 
 
-def _configure_fabric() -> None:
-    """Set Blackhole fabric config before opening the mesh device.
-
-    Mirrors TTSkyReelsRunner._configure_fabric / get_pipeline_device_params
-    (tt-inference-server's precedent runner): FABRIC_1D, and on Blackhole a tensix MUX +
-    ROW dispatch, which FABRIC_1D_MUX requires.
-    """
-    import ttnn
-
-    ttnn.set_fabric_config(
-        ttnn.FabricConfig.FABRIC_1D,
-        ttnn.FabricReliabilityMode.STRICT_INIT,
-        None,
-        ttnn.FabricTensixConfig.MUX if ttnn.device.is_blackhole() else ttnn.FabricTensixConfig.DISABLED,
-    )
-
-
-def _open_device_and_pipeline(shape: tuple):
-    """Claim the mesh, load the SkyReels pipeline. Blocking, hardware, lifespan-only."""
-    import ttnn
-    from skyreels_ttnn.pipeline_skyreels import SkyReelsPipeline
-
-    _configure_fabric()
-    rows, cols = shape
-    dispatch_core_config = ttnn.DispatchCoreConfig(
-        None,
-        ttnn.device.DispatchCoreAxis.ROW if ttnn.device.is_blackhole() else None,
-        ttnn.FabricTensixConfig.MUX if ttnn.device.is_blackhole() else None,
-    )
-    device = None
-    try:
-        device = ttnn.open_mesh_device(
-            mesh_shape=ttnn.MeshShape(rows, cols),
-            dispatch_core_config=dispatch_core_config,
-        )
-        pipeline = SkyReelsPipeline.create_pipeline(mesh_device=device)
-    except Exception:
-        if device is not None:
-            _close_device(device)
-        try:
-            ttnn.set_fabric_config(ttnn.FabricConfig.DISABLED)
-        except Exception:
-            pass
-        raise
-    return device, pipeline
-
-
-def _close_device(device) -> None:
-    """Release the mesh, swallowing any error -- mirrors animatediff_ttnn.server.app."""
-    try:
-        import ttnn
-
-        ttnn.close_mesh_device(device)
-    except Exception:
-        pass
-
-
 def _frames_to_mp4_b64(frames, fps: int = DEFAULT_FPS) -> str:
     """SkyReelsPipeline output (1, T, H, W, C) float32 in [0, 1] -> base64 MP4.
 
@@ -229,8 +172,10 @@ async def lifespan(app: FastAPI):
     A failure here is deliberately fatal: a server that starts without a device would
     answer /health cheerfully and fail every generation.
     """
+    from skyreels_ttnn.session import ensure_skyreels_pipeline
+
     shape = mesh_shape_from_env()
-    device, pipeline = await asyncio.to_thread(_open_device_and_pipeline, shape)
+    device, pipeline = await asyncio.to_thread(ensure_skyreels_pipeline, shape)
     app.state.engine = {
         "device": device,
         "pipeline": pipeline,
@@ -242,7 +187,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        _close_device(device)
+        from skyreels_ttnn.session import close as close_session
+
+        close_session()
 
 
 app = FastAPI(title="tt-skyreels", lifespan=lifespan)

@@ -1,0 +1,5 @@
+name: skyreels
+description: SkyReels-V2-DF-1.3B-540P text-to-video demo (Blackhole hardware, P300x2/QB2)
+port: 7861
+chips: 4
+launch: .venv/bin/python app.py

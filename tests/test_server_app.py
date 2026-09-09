@@ -67,6 +67,43 @@ def test_importing_the_server_does_not_import_ttnn():
     assert out.stdout.strip() == "", f"importing the server pulled in: {out.stdout.strip()}"
 
 
+def test_importing_the_session_module_does_not_import_ttnn():
+    """Same property, for skyreels_ttnn.session -- the shared device singleton the
+    server app AND the Gradio app both delegate to. Its module scope is just a lock and
+    three globals; every ttnn/pipeline import lives inside ensure_skyreels_pipeline()."""
+    code = textwrap.dedent(
+        """
+        import sys
+        import skyreels_ttnn.session  # noqa: F401
+        bad = sorted(m for m in sys.modules if m == "ttnn" or m.startswith("ttnn."))
+        print(",".join(bad))
+        """
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=str(REPO_ROOT)
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert out.stdout.strip() == "", f"importing the session module pulled in: {out.stdout.strip()}"
+
+
+def test_a_mesh_shape_mismatch_against_an_already_open_session_is_refused():
+    """Reconfiguring means closing first -- silently reopening against a different
+    shape than a caller asked for is the same wrong-mesh hazard mesh_shape_from_env
+    guards against, one layer up."""
+    import skyreels_ttnn.session as session
+
+    session._device = object()
+    session._pipeline = object()
+    session._mesh_shape = (2, 2)
+    try:
+        with pytest.raises(RuntimeError):
+            session.ensure_skyreels_pipeline((1, 4))
+    finally:
+        session._device = None
+        session._pipeline = None
+        session._mesh_shape = None
+
+
 def test_importing_the_pipeline_module_does_not_import_ttnn():
     """Same property, for skyreels_ttnn.pipeline_skyreels this time -- it is imported
     directly by the manifest's ``verify`` list (independent of the server app), so it
@@ -335,3 +372,60 @@ def test_the_manifest_declares_the_weights_the_served_path_actually_loads(manife
     from skyreels_ttnn.pipeline_skyreels import SkyReelsPipeline
 
     assert manifest["weights"] == SkyReelsPipeline.CHECKPOINT
+
+
+# ---- the Gradio app and its discolike manifest --------------------------------------------
+
+
+def test_importing_the_gradio_app_does_not_import_ttnn():
+    """Same property as the ASGI app: skyreels_ttnn.session (and therefore ttnn) is
+    imported inside the generate() callback, not at module scope, so building the
+    gr.Blocks graph works with no card."""
+    code = textwrap.dedent(
+        """
+        import sys
+        import app  # noqa: F401
+        bad = sorted(m for m in sys.modules if m == "ttnn" or m.startswith("ttnn."))
+        print(",".join(bad))
+        """
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, cwd=str(REPO_ROOT)
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    assert out.stdout.strip() == "", f"importing app.py pulled in: {out.stdout.strip()}"
+
+
+def test_the_gradio_apps_frame_count_default_matches_the_servers():
+    """gr.Number(value=33, ...) is hand-typed in app.py rather than imported, because
+    Gradio component defaults are literals, not references -- pin it against the
+    server's own constant so the two cannot drift apart silently."""
+    import app as gradio_app
+
+    from skyreels_ttnn.server.app import DEFAULT_NUM_FRAMES
+
+    assert gradio_app.frames_num.value == DEFAULT_NUM_FRAMES
+
+
+def test_the_gradio_app_opens_the_same_mesh_the_manifest_declares(manifest):
+    import app as gradio_app
+
+    assert gradio_app.MESH_SHAPE == (2, 2)
+    assert manifest["serve"]["mesh_device"] == "QB2"  # QB2 -> (2, 2), see container_manifest.py
+
+
+def test_the_disco_manifest_parses_and_points_at_the_gradio_app():
+    disco = yaml.safe_load((REPO_ROOT / ".disco" / "app.yaml").read_text())
+    assert disco["name"] == "skyreels"
+    assert disco["port"] == 7861
+    assert disco["launch"] == ".venv/bin/python app.py"
+    # tt-discolike's own manifest schema requires this pattern for `name`.
+    import re
+
+    assert re.fullmatch(r"[A-Za-z0-9_.-]+", disco["name"])
+
+
+def test_the_disco_manifest_port_matches_the_gradio_apps_launch_port():
+    disco = yaml.safe_load((REPO_ROOT / ".disco" / "app.yaml").read_text())
+    server_port_line = (REPO_ROOT / "app.py").read_text()
+    assert f"server_port={disco['port']}" in server_port_line
