@@ -92,3 +92,26 @@ build dir rather than a full clean rebuild.
   publishing anywhere.
 - No GitHub remote yet — this repo is local-only. `tt_model_package.yaml`'s `extra_code`
   currently points at a local path; switch to a `{repo, ref}` pin once pushed.
+
+## 2026-09-09 — Gradio app + discolike manifest
+
+Added `app.py` (Gradio UI) and `.disco/app.yaml`, matching tt-animatediff's own pair of
+files. Along the way, extracted the device/pipeline open-once-per-process logic that used
+to live only inside `skyreels_ttnn/server/app.py`'s ASGI lifespan into
+`skyreels_ttnn/session.py` (mirroring `animatediff_ttnn/session.py`), so the ASGI server
+and the Gradio app share one implementation of "open the mesh, load the pipeline, keep it
+open" instead of two copies that can drift. Re-verified the served path end-to-end after
+this refactor (rebuild → serve → `/v1/videos/generations` → HTTP 200) since it changed
+`server/app.py`'s lifespan, not just additive new files.
+
+No cpu/sim mode selector, unlike tt-animatediff's `app.py` — this model has only ever run
+on real Blackhole hardware (2×2 QB2 mesh), so offering modes that don't work would save
+nobody anything. No per-step preview streaming either: `SkyReelsPipeline.__call__` has no
+`on_step` hook the way `generate_frames_temporal` does, so there is nothing to stream
+mid-denoise; the UI yields a "starting" status immediately instead so it doesn't look
+frozen during first-request kernel compilation.
+
+Verified: `app.py` imports cleanly with no card (no `ttnn` in `sys.modules`), the Gradio
+`Blocks` graph builds, and `demo.launch()` actually serves an HTTP 200 on `:7861` (not
+re-verified: an actual Generate click through the UI — the ASGI path's equivalent request
+was re-verified instead, since both now go through the same `skyreels_ttnn.session`).
