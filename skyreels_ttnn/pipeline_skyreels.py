@@ -264,12 +264,22 @@ class SkyReelsTTNNTransformer(torch.nn.Module):
         The TTNN model expects:
           spatial:  PyTorch tensor (B, C, F, H, W)
           prompt:   ttnn.Tensor  (1, B, L, 4096) — converted here from PyTorch
-          timestep: PyTorch tensor (B,)
+          timestep: ttnn.Tensor  (B, 1, 1, 1), dtype float32 — converted here from
+                    PyTorch, mirroring models.tt_dit.pipelines.wan.pipeline_wan's own
+                    call site.
+
+        THE BUG THIS DOCSTRING USED TO PAPER OVER: it claimed the TTNN model wanted a
+        bare PyTorch tensor for ``timestep``, unconverted. That was never true -- it
+        was never exercised, because nothing had run a real denoise step through this
+        code path before. diffusers' scheduler produces an int64 timestep (an index
+        into the noise schedule); WanTimestepsEmbedding asserts its input dtype
+        matches its own (``DataType.FLOAT32``), so a raw int64 torch tensor fails that
+        assert immediately -- found on real hardware, one generation past the ftfy fix.
         """
         if not self._weights_loaded:
             raise RuntimeError("Call load_skyreels_weights() before forward().")
 
-        from models.tt_dit.utils.tensor import bf16_tensor
+        from models.tt_dit.utils.tensor import bf16_tensor, float32_tensor
 
         # Convert text encoder output to TTNN 4D format.
         # Unsqueeze: (B, L, D) → (1, B, L, D) — WAN TTNN's 4D convention.
@@ -277,10 +287,17 @@ class SkyReelsTTNNTransformer(torch.nn.Module):
         enc_4d = encoder_hidden_states.unsqueeze(0).to(torch.bfloat16)
         tt_prompt = bf16_tensor(enc_4d, device=self.mesh_device)
 
+        # (B,) int64 -> (B, 1, 1, 1) float32 ttnn.Tensor, exactly as
+        # pipeline_wan.py builds it before its own transformer call.
+        tt_timestep = float32_tensor(
+            timestep.to(torch.float32).unsqueeze(1).unsqueeze(1).unsqueeze(1),
+            device=self.mesh_device,
+        )
+
         noise_pred = self.ttnn_model(
             spatial=hidden_states,
             prompt=tt_prompt,
-            timestep=timestep,
+            timestep=tt_timestep,
         )
 
         if return_dict:
