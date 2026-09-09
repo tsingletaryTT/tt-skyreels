@@ -4,7 +4,7 @@
 # tt-model-manager v5.1 container package for tt-skyreels (SkyReels-V2-DF-1.3B-540P, T2V).
 #
 #   tt-model package tt_model_package.yaml
-#   tt-model serve tsingletary/tt-skyreels
+#   tt-model serve episod/tt-skyreels
 #
 # This is a DIFFUSION model, so it uses `kind: tt-dit-server` rather than either vLLM
 # kind: there are no tokens, no KV cache and no continuous batching. What it needs is a
@@ -19,7 +19,7 @@
 
 schema: "5.1"
 name: tt-skyreels
-repo: tsingletary/tt-skyreels
+repo: episod/tt-skyreels
 # The repo the SERVED path actually loads: SkyReelsPipeline.create_pipeline calls
 # SkyReelsV2Transformer3DModel.from_pretrained(checkpoint_name, subfolder="transformer")
 # plus the VAE/tokenizer/text_encoder/scheduler subfolders of the SAME repo -- unlike
