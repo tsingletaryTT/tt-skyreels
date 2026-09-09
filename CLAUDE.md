@@ -115,3 +115,24 @@ Verified: `app.py` imports cleanly with no card (no `ttnn` in `sys.modules`), th
 `Blocks` graph builds, and `demo.launch()` actually serves an HTTP 200 on `:7861` (not
 re-verified: an actual Generate click through the UI — the ASGI path's equivalent request
 was re-verified instead, since both now go through the same `skyreels_ttnn.session`).
+
+## 2026-09-09 — pushed to GitHub and HF; registered with tt-model-manager
+
+- Code: [github.com/tsingletaryTT/tt-skyreels](https://github.com/tsingletaryTT/tt-skyreels)
+  (private, `main` as default branch — the repo was initially created with `master` by an
+  oversight in an earlier `git init`; renamed, re-pushed, default branch changed, old
+  `master` deleted, per the house "default branch is always `main`" rule).
+- Package: `episod/tt-skyreels` on HF (private). **Not** `tsingletary/tt-skyreels` as
+  earlier drafts of this file and the manifest said — `hf auth whoami` resolves to
+  `episod` (a Tenstorrent org member), not `tsingletary`; caught before the push would
+  have failed on a permissions error, and fixed in `tt_model_package.yaml`'s `repo:`
+  field before pushing.
+- `extra_code.root` now pins `https://github.com/tsingletaryTT/tt-skyreels` at a real
+  commit sha (reachable from `main`), replacing the local-path root used during bring-up.
+  Rebuilt and confirmed the git-clone path works (`built.tt_metal.mode: "git"`, `dirty:
+  false`) before pushing to HF.
+- **Registered, confirmed**: `tt-model info episod/tt-skyreels` resolves the pushed
+  manifest and reports "✓ compatible with the local environment". Pushed **private**
+  (the tool's own default) — not `--public`, not `--publish` (community catalog) — per
+  the tt-model-package-test skill's own caution not to add those on judgment alone.
+- I2V (SkyReels-V2-I2V-14B-540P) is still a separate, not-yet-started follow-up.
