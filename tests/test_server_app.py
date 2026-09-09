@@ -177,6 +177,32 @@ def test_defaults_match_the_pipelines_own_call_signature():
     assert lib["num_frames"].default == 9
 
 
+def test_the_transformer_has_a_device_property_diffusers_can_introspect():
+    """THE BUG THIS GUARDS AGAINST: found on real hardware, on the first actual generation
+    request (the build-time ``verify`` checks never call the pipeline, so this survived
+    all the way to a served, weight-loaded container).
+
+    ``diffusers.DiffusionPipeline.device`` -- and ``_execution_device``, which falls back
+    to it -- iterates every registered ``torch.nn.Module`` component and reads
+    ``module.device``. Plain ``torch.nn.Module`` has no such attribute. Without this
+    property, the very first ``/v1/videos/generations`` call raised
+    ``AttributeError: 'SkyReelsV2Pipeline' object has no attribute '_execution_device'``
+    -- confusing because Python's property protocol converts an ``AttributeError`` raised
+    INSIDE a property getter into "attribute not found", which then fell through to
+    ``ConfigMixin.__getattr__`` and reported the wrong attribute name entirely.
+
+    Constructed via ``object.__new__`` rather than the real ``__init__`` (which opens a
+    TTNN mesh device) -- this test only needs the class to define the property, not a
+    working instance.
+    """
+    import torch
+
+    from skyreels_ttnn.pipeline_skyreels import SkyReelsTTNNTransformer
+
+    bare = object.__new__(SkyReelsTTNNTransformer)
+    assert bare.device == torch.device("cpu")
+
+
 @pytest.mark.parametrize(
     "field,value",
     [("num_frames", 0), ("num_frames", 98), ("num_inference_steps", 0),

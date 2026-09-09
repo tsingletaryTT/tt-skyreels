@@ -163,6 +163,30 @@ class SkyReelsTTNNTransformer(torch.nn.Module):
         """Dtype of the model (bfloat16 after weight loading)."""
         return torch.bfloat16
 
+    @property
+    def device(self) -> torch.device:
+        """A placeholder torch device, for diffusers' generic pipeline introspection.
+
+        THE BUG THIS EXISTS TO FIX: ``diffusers.DiffusionPipeline.device`` (and
+        ``_execution_device``, which falls back to it) iterates every registered
+        ``torch.nn.Module`` component and reads ``module.device``. Plain
+        ``torch.nn.Module`` defines no such attribute -- it only exists on modules
+        that hold real torch parameters/buffers or define it themselves. Without
+        this property, the first real request (not the build-time ``verify``
+        checks, which never call the pipeline) raised
+        ``AttributeError: 'SkyReelsV2Pipeline' object has no attribute
+        '_execution_device'`` -- a genuinely confusing message, because Python's
+        property protocol silently converts an ``AttributeError`` raised INSIDE a
+        property getter into "attribute not found on the instance", which then
+        fell through to ``ConfigMixin.__getattr__``.
+
+        This model's real compute happens on the TTNN mesh device, which has no
+        ``torch.device`` representation -- ``cpu`` is a placeholder diffusers uses
+        only for bookkeeping (e.g. where to build a ``torch.Generator``), not for
+        dispatching any actual computation.
+        """
+        return torch.device("cpu")
+
     @contextmanager
     def cache_context(self, cache_name: str):
         """

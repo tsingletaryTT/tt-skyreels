@@ -83,6 +83,13 @@ runtime:
     - imageio>=2.30,<3
     - imageio-ffmpeg>=0.4,<1
     - numpy<3
+    # models/common/utility_functions.py (imported transitively by models.tt_dit.layers.linear,
+    # reached from pipeline_skyreels.py's SkyReelsTTNNTransformer.__init__) does `import
+    # pytest` at MODULE SCOPE -- a real dependency the image's own image needs even though
+    # it never runs a test. Found on real hardware: the mesh opened fine and the crash was
+    # this ModuleNotFoundError deep in the lifespan, not a device problem. This is a known
+    # tt-metal quirk (see tt-model-package-test skill's own troubleshooting notes).
+    - pytest>=7.0.0
 
 serve:
   # QB2, not P300x2: tt-model-manager's own preset table maps "P300x2" to a (1, 4) LINE
