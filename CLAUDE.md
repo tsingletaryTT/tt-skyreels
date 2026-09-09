@@ -136,3 +136,12 @@ was re-verified instead, since both now go through the same `skyreels_ttnn.sessi
   (the tool's own default) — not `--public`, not `--publish` (community catalog) — per
   the tt-model-package-test skill's own caution not to add those on judgment alone.
 - I2V (SkyReels-V2-I2V-14B-540P) is still a separate, not-yet-started follow-up.
+
+## 2026-09-09 — README, LICENSE, and a proper model card
+
+Added a real `README.md` + `LICENSE` (Apache-2.0, matching the SPDX headers already in
+every source file) to the GitHub repo, and a `card.description`/`card.quickstart` block
+to `tt_model_package.yaml` so the HF-generated README actually says what the model is
+instead of just the bare pull/serve commands. Rebuilt and re-pushed — confirmed via a
+fresh `hf_hub_download('episod/tt-skyreels', 'README.md')` that the new description and
+quickstart are live on the Hub.
