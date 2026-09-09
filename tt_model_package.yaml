@@ -50,12 +50,12 @@ source:
   # `extra_code` ships it pinned to a ref so the package is reproducible by whoever
   # pulls it, not only by the machine that built it.
   extra_code:
-    - root: /home/ttuser/code/tt-skyreels
-      # LOCAL PATH for now, during bring-up on this box: tt-skyreels has no GitHub
-      # remote yet. Switch this to `{repo: https://github.com/<org>/tt-skyreels, ref:
-      # <sha>}` once the repo is pushed -- same reasoning as tt-animatediff's own ref
-      # pin comment: a local root is hermetic for the author but not reproducible by a
-      # consumer reading this file.
+    - root:
+        repo: https://github.com/tsingletaryTT/tt-skyreels
+        # A commit, not a branch: reachable from main (confirmed via `git log -1
+        # --format=%D`, which shows both HEAD -> main and origin/main), so it survives
+        # main moving forward -- same reasoning as tt-animatediff's own ref pin comment.
+        ref: 707bfe542d2af5819e29d5156e34eae0cb4418d5
       paths:
         - skyreels_ttnn
   ubuntu: "22.04"
