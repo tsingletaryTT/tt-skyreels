@@ -116,3 +116,21 @@ verify:
   # a missing allowlist entry for models.tt_dit fails here, on the author's machine.
   - "from skyreels_ttnn.pipeline_skyreels import SkyReelsPipeline, SkyReelsTTNNTransformer"
   - "from skyreels_ttnn.server.app import mesh_shape_from_env, SUPPORTED_MESH_SHAPES; assert (2, 2) in SUPPORTED_MESH_SHAPES"
+
+card:
+  description: >-
+    SkyReels-V2-DF-1.3B-540P (text-to-video) on Tenstorrent Blackhole via TTNN --
+    reuses tt-metal's WanTransformer3DModel wholesale (SkyReelsV2's transformer is
+    weight-compatible with it) behind a small ASGI server, following the tt-dit-server
+    pattern tt-animatediff established.
+  quickstart: |
+    ```bash
+    tt-model pull episod/tt-skyreels --with-weights
+    tt-model serve episod/tt-skyreels
+    curl localhost:20000/v1/videos/generations \
+      -H 'Content-Type: application/json' \
+      -d '{"prompt": "a red bicycle leaning against a brick wall in soft morning light"}'
+    ```
+    Source, a local Gradio UI, and the bring-up log (bugs found only by actually
+    serving a generation, none of them in the reused TTNN model itself):
+    [tsingletaryTT/tt-skyreels](https://github.com/tsingletaryTT/tt-skyreels).
