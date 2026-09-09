@@ -33,6 +33,9 @@ setup(
         "protobuf",
         "imageio>=2.30,<3",
         "imageio-ffmpeg>=0.4,<1",
+        # diffusers.pipelines.skyreels_v2's prompt cleaning calls ftfy.fix_text()
+        # unconditionally -- a real dependency, not an optional extra.
+        "ftfy>=6.0",
         # tt-metal and ttnn must be installed separately (not on PyPI)
     ],
     extras_require={

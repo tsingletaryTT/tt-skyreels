@@ -90,6 +90,12 @@ runtime:
     # this ModuleNotFoundError deep in the lifespan, not a device problem. This is a known
     # tt-metal quirk (see tt-model-package-test skill's own troubleshooting notes).
     - pytest>=7.0.0
+    # diffusers.pipelines.skyreels_v2.pipeline_skyreels_v2.basic_clean() calls
+    # ftfy.fix_text() unconditionally -- no try/except ImportError guard in this
+    # diffusers version -- so it is a real dependency of ENCODING A PROMPT, not an
+    # optional extra. Found on real hardware, one generation past the .device fix:
+    # NameError: name 'ftfy' is not defined, raised from inside encode_prompt().
+    - ftfy>=6.0
 
 serve:
   # QB2, not P300x2: tt-model-manager's own preset table maps "P300x2" to a (1, 4) LINE
