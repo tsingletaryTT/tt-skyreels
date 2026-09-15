@@ -2,8 +2,8 @@
 
 [SkyReels-V2-DF-1.3B-540P](https://huggingface.co/Skywork/SkyReels-V2-DF-1.3B-540P-Diffusers)
 (text-to-video) on Tenstorrent Blackhole via TTNN, packaged as a
-[tt-model-manager](https://github.com/tenstorrent/tt-model-manager) v5.1 **CONTAINER**
-package. Pull it with just Docker + a TT card — no host tt-metal install required:
+[tt-model-manager](https://github.com/tenstorrent/tt-model-manager) v6 **thin** bundle
+(a pip/venv install, not a container image):
 
 ```bash
 tt-model pull episod/tt-skyreels --with-weights
@@ -42,7 +42,7 @@ bugs found and fixed during bring-up — none of them were in the reused TTNN mo
 | `skyreels_ttnn/server/app.py` | The ASGI app tt-model-manager's `tt-dit-server` kind serves |
 | `app.py` | A local Gradio UI (`pip install -e ".[ui]"` then `python app.py`, port 7861) |
 | `.disco/app.yaml` | [tt-discolike](https://github.com/tsingletaryTT/tt-discolike) catalog manifest |
-| `tt_model_package.yaml` | The tt-model-manager v5.1 manifest this package is built from |
+| `setup.py` | Builds `skyreels-ttnn`, the wheel `tt-model package-thin` ships as the served-path closure |
 | `tests/` | CPU-only test suite — no hardware or tt-metal needed to run it |
 
 ## Running it
@@ -73,13 +73,14 @@ pip install -e ".[dev,serve]"
 pytest tests/ -q          # 48 tests, pure CPU, no card or tt-metal needed
 ```
 
-To rebuild and re-verify the actual container package (needs a tt-model-manager
-checkout and real hardware):
-
-```bash
-tt-model package --container tt_model_package.yaml --out ~/tt-model-builds
-tt-model serve ~/tt-model-builds/tt-skyreels/tt_kernel_manifest.json
-```
+To rebuild the actual v6 thin bundle (needs a tt-model-manager checkout, a tt-metal
+source tree at v0.78.0 for the `models/tt_dit` closure, and real hardware to verify):
+build `skyreels-ttnn` from this repo's own `setup.py`, vendor `models/tt_dit` +
+`models/common/{utility_functions.py,device_utils.py,modules/tt_ccl.py}` into a second
+wheel, then `tt-model package-thin --kind tt-dit-server --app skyreels_ttnn.server.app:app
+--models-wheel <both wheels> ...`. See [CLAUDE.md](CLAUDE.md)'s 2026-09-15 entry for the
+exact recipe, including the `kernel_patch/` workaround the published bundle needs for a
+real ttnn 0.78.0 PyPI wheel gap (three missing fabric kernel source files).
 
 See [CLAUDE.md](CLAUDE.md) for the full bring-up log, including every bug found only by
 actually serving a generation on hardware (a module-scope `ttnn` import, missing

@@ -145,3 +145,43 @@ to `tt_model_package.yaml` so the HF-generated README actually says what the mod
 instead of just the bare pull/serve commands. Rebuilt and re-pushed — confirmed via a
 fresh `hf_hub_download('episod/tt-skyreels', 'README.md')` that the new description and
 quickstart are live on the Hub.
+
+## 2026-09-15 — repackaged as v6 thin, dropped the v5.1 CONTAINER manifest
+
+Standardized on v6 thin (pip/venv) across all tt-model bundles this session; removed
+`tt_model_package.yaml`, which described the now-abandoned CONTAINER build. `setup.py`
+already existed and needed no changes — built straight into `skyreels-ttnn==0.1.0` via
+`uv build --wheel`. Added a second wheel, `tt-skyreels-models-closure==0.78.0`: vendors
+tt-metal's `models/tt_dit` (SkyReelsV2's transformer is weight-compatible with
+`WanTransformer3DModel` and reuses it wholesale) minus `tests/`/`experimental/`/`reference/`
+(confirmed unreferenced by the WAN import path via grep before excluding), plus only the
+two `models/common` modules `tt_dit` actually imports (`utility_functions.py`,
+`device_utils.py`, `modules/tt_ccl.py`) rather than the whole `models/common` tree —
+`models/common` on this box's main tt-metal checkout carries a lot of unrelated
+LLM-serving infrastructure (`readiness_check/`, `llm_runtime/`, `modules/moe/configs/`)
+that this model has no path to.
+
+Real hardware finding, not a packaging bug: first mesh-open attempt on the 4-chip QB2
+mesh threw `TT_THROW: Kernel file
+tt_metal/fabric/impl/kernels/edm_fabric/fabric_router_mux_extension.cpp doesn't exist in
+any of the searched paths!` — `session.py`'s hardcoded `FabricConfig.FABRIC_1D` needs
+kernel source files that ttnn 0.78.0's PyPI wheel genuinely omits (confirmed: the real
+tt-metal v0.78.0 source tree has 4 files under
+`tt_metal/fabric/impl/kernels/edm_fabric/`, the wheel ships only 1). This is an upstream
+`ttnn` wheel-packaging gap, not anything about this model's code — tt-tnt-1024's own
+4-chip config didn't hit it because it uses `FABRIC_2D_TORUS_XY` instead. Worked around
+by vendoring the 3 missing files (byte-identical, from the matching v0.78.0 source tag)
+into the published bundle's own `kernel_patch/` directory and pointing tt-metal's
+existing `TT_METAL_KERNEL_PATH` env var at it in `run.sh` (confirmed this is a real,
+already-supported extra-search-directory mechanism by reading `tt_metal/llrt/rtoptions.cpp`
+before using it) — no tt-model-manager changes needed. Verified twice: once with the
+files placed directly in the venv's installed `ttnn` package (to confirm the diagnosis),
+then again with that hand-patch removed and only `kernel_patch/` + `TT_METAL_KERNEL_PATH`
+in place (to confirm the actually-published mechanism works standalone). Both real
+`/v1/videos/generations` calls after that returned valid MP4 (480×272 @ 24fps, ffprobe-
+confirmed) — one saved locally at `generated/v6-thin-verify-red-bicycle.mp4`.
+
+Pushed to `episod/tt-skyreels`, replacing the CONTAINER image; retagged (`thin` in, stale
+`tt-model-container` out), removed a stale `requirements.lock` left over from the old
+CONTAINER build, and fixed the auto-generated README (still describing the old build
+verbatim — Docker image, schema 5.1, a `code/` provenance table that no longer exists).
