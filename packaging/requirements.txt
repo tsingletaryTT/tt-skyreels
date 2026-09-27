@@ -1,0 +1,31 @@
+# v6 thin bundle for tt-skyreels, kind="tt-dit-server" -- no vLLM at all (no tokens,
+# no KV-cache, no continuous batching).
+ttnn==0.78.0                          # real PyPI release, matches this bundle's tt-metal version
+tt-skyreels-models-closure==0.78.0    # vendored models/tt_dit (SkyReelsV2's transformer is
+                                       # weight-compatible with WanTransformer3DModel and reuses
+                                       # it wholesale) + the two models/common modules it needs.
+                                       # NOT the real upstream tt-metal-models
+                                       # (tenstorrent/tt-metal#54478), a narrower local stand-in.
+skyreels-ttnn==0.1.1                   # this repo's own served-path closure (session, ASGI app,
+                                        # pipeline_skyreels.py) -- built from its own existing setup.py
+torch==2.14.0+cpu                      # not a ttnn dependency (ttnn declares none) -- the model
+                                        # code itself uses torch tensors before ttnn conversion
+diffusers>=0.32.1,<0.41
+transformers>=4.30.0,<6
+accelerate>=0.20.0,<2
+safetensors>=0.4.0,<1
+sentencepiece
+protobuf
+imageio>=2.30,<3
+imageio-ffmpeg>=0.4,<1
+numpy<3
+pytest>=7.0.0                          # models/common/utility_functions.py imports pytest at
+                                        # module level -- a real dependency, not a test-only extra
+ftfy>=6.0                              # diffusers' skyreels_v2 pipeline calls ftfy.fix_text()
+                                        # unconditionally when cleaning a prompt
+#
+# Base HTTP stack every tt-dit-server kind needs (see launchers.TtDitServerLauncher):
+fastapi
+uvicorn
+pydantic>=2
+pillow

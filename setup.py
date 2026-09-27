@@ -8,16 +8,18 @@ from setuptools import setup, find_packages
 
 setup(
     name="skyreels-ttnn",
-    version="0.1.0",
+    version="0.1.1",
     author="Tenstorrent",
     description="SkyReels-V2-DF-1.3B-540P (T2V) on Tenstorrent Blackhole via TTNN",
-    url="https://github.com/tenstorrent/tt-skyreels",
+    url="https://github.com/tsingletaryTT/tt-skyreels",
     packages=find_packages(exclude=["tests"]),
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        # Covers this package's code only. The SkyReels weights it downloads at
+        # runtime are under the Skywork Community License, not Apache-2.0 (README.md).
         "License :: OSI Approved :: Apache Software License",
         "Programming Language :: Python :: 3",
     ],
@@ -43,7 +45,7 @@ setup(
             "pytest>=7.0.0",
             "httpx>=0.24.0",  # fastapi's TestClient needs it; otherwise server tests
                                # fail at import rather than skipping
-            "pyyaml",  # tests/test_server_app.py reads tt_model_package.yaml directly
+            "pyyaml",  # tests/test_server_app.py parses .disco/app.yaml
         ],
         # The ASGI serving surface (skyreels_ttnn/server/). Matches the packages
         # tt-model-manager's tt-dit-server kind installs for this app, so a bundle and a

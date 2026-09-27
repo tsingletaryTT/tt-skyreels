@@ -1,7 +1,18 @@
 # tt-skyreels — project log
 
-Packages SkyReels-V2-DF-1.3B-540P (text-to-video) as a tt-model-manager v5.1 CONTAINER,
-following the `tt-dit-server` pattern established by `tenstorrent/tt-animatediff`.
+Packages SkyReels-V2-DF-1.3B-540P (text-to-video) for tt-model-manager, following the
+`tt-dit-server` pattern established by `tenstorrent/tt-animatediff`. It was first a v5.1
+CONTAINER (2026-09-09) and has been a v6 thin bundle since 2026-09-15; see the dated
+entries below.
+
+**Current facts, corrected 2026-09-27; the older entries below keep their original text:**
+- GitHub `tsingletaryTT/tt-skyreels` and HF `episod/tt-skyreels` are both **public**.
+  The 2026-09-09 entries say "private", which was true then and is stale now.
+- The request default is **20** inference steps (`DEFAULT_NUM_INFERENCE_STEPS`). The
+  33-frame verification runs passed `num_inference_steps: 8` explicitly; 8 was never the
+  default.
+- The weights are **Skywork Community License** (`license: other` / `skywork-license`),
+  not Apache-2.0. Only this repo's code is Apache-2.0.
 
 ## 2026-09-09 — initial bring-up and packaging
 
@@ -83,7 +94,8 @@ build dir rather than a full clean rebuild.
 - `curl .../v1/models` — reports the correct weights id.
 - `curl .../v1/videos/generations` — TWO real generations, both HTTP 200 with valid H.264
   MP4 output confirmed via `ffprobe` (480×272 @ 24fps): a 9-frame/8-step debug shape, and
-  the server's real default (33 frames, 8 steps).
+  the server's real default (33 frames, 8 steps). *[Correction 2026-09-27: 33 frames is
+  the default; the step count was passed explicitly. The step default is 20.]*
 
 ### Not yet done
 
@@ -185,3 +197,69 @@ Pushed to `episod/tt-skyreels`, replacing the CONTAINER image; retagged (`thin` 
 `tt-model-container` out), removed a stale `requirements.lock` left over from the old
 CONTAINER build, and fixed the auto-generated README (still describing the old build
 verbatim — Docker image, schema 5.1, a `code/` provenance table that no longer exists).
+
+## 2026-09-27 — doc accuracy, licensing, tests, weights pin (skyreels-ttnn 0.1.1)
+
+**Prompt:** a no-hardware packaging-hygiene pass ahead of a repackage with pinned weights.
+Fix the licensing claim everywhere, the "8 steps" default claim, the stale "private"
+wording, the 8 tests reading the deleted `tt_model_package.yaml`, and the `setup.py` url.
+Pin the weights in every load. Document, without fixing, the diffusion-forcing and fps
+gaps. Bump to 0.1.1.
+
+- **License.** The README said the weights were Apache-2.0 "matching upstream". Upstream
+  is `license: other` / `skywork-license`, so that was wrong. The README now separates
+  the code (Apache-2.0) from the weights (Skywork Community License, never
+  redistributed). A comment on setup.py's classifier says the same.
+- **Steps.** The request default was always 20 (`git log -S`); it is now a named
+  constant, `DEFAULT_NUM_INFERENCE_STEPS`. A test pins it against the request model and
+  the Gradio slider. The 2026-09-27 bench on the published bundle measured a 33-frame
+  clip at a ~57.6 s median for 20 steps and ~54.3 s for 8 steps. The TT denoise loop is
+  ~4 s of that (~0.21 s/step); the CPU text encoder + VAE is the rest. Cold start was
+  ~30 min, almost all of it re-downloading ~28 GB of weights. A warm restart takes
+  <= 19 s. The server docstring's old "15-30 min cold, 3.5B params" came from the
+  FLUX precedent and was never measured here; it is replaced with these numbers.
+- **Weights pin.** `PINNED_WEIGHTS_REVISION = 958acd63685c7e632e4b194549f2a703e34bd98b`
+  (upstream lastModified 2025-08-11). All five `from_pretrained` calls (transformer,
+  tokenizer, text encoder, VAE, scheduler) go through `_revision_kwargs`, so they
+  resolve one revision:
+  - `$TT_MODEL_WEIGHTS_REVISION` wins over the pin.
+  - A local `MODEL_WEIGHTS_DIR` gets no revision.
+  - A foreign hub id gets only an explicit override, never this repo's sha.
+- **Tests.** The 8 manifest-fixture tests errored after the yaml was deleted. Here is
+  what happened to each:
+  - Removed: the v5.1-only extra_code test, the code-allowlist test and the kind test.
+    Nothing in the repo holds those values any more.
+  - Re-pointed: the rest now check a hand-recorded snapshot of the published v6
+    manifest (`SKYREELS_MESH_SHAPE=2x2`, `--app skyreels_ttnn.server.app:app`) and
+    README's package-thin recipe.
+  - Added: a wiring test that stubs every `from_pretrained` and asserts each call got
+    the pinned repo + revision. I watched it fail by dropping one `**rev`.
+
+  53 pass, all on CPU. The in-process run never imports ttnn, even though ttnn is
+  importable in `.venv` (the ttnn-import tests use subprocesses).
+- **Documented, not fixed** (module header of `pipeline_skyreels.py` + README):
+  - The port builds the plain `SkyReelsV2Pipeline`, not the checkpoint's
+    `SkyReelsV2DiffusionForcingPipeline`.
+  - The checkpoint sets `inject_sample_info: true`, but the TTNN WAN transformer drops
+    the fps embedding/projection and ignores `fps`.
+
+  Neither has been measured against a reference.
+- `setup.py` url fixed: `tenstorrent/tt-skyreels` (404) became `tsingletaryTT/tt-skyreels`.
+- **Repackage needs:**
+  - a new `skyreels_ttnn-0.1.1` wheel;
+  - `package-thin --weights-revision 958acd63685c7e632e4b194549f2a703e34bd98b`;
+  - the same `kernel_patch/` + closure wheel as before (`ttnn==0.78.0`).
+
+## 2026-09-27 — the packaging recipe is now a checked-in, tested artifact
+
+Review on PR #1 pointed out that the packaging tests only checked a hand-copied snapshot of
+the published manifest, so a repackage could drift without any test failing. Worse, the
+recipe wasn't in the repo at all: the bundle's `requirements.txt` and `kernel_patch/` only
+existed in the published bundle, copied there by hand. Added `packaging/` (the pip pins, the
+three fabric kernel files, byte-identical to tt-metal v0.78.0, and `package-thin.sh` with every
+flag including `--weights-revision`). The tests now parse the script and requirements. Each
+new test was seen to fail by breaking the recipe (weights revision, mesh env, app target, wheel
+pin), then restored. The script only stages: `package-thin` cannot ship an extra directory, and
+`tt-model push` takes only v5.1 packages, so publishing uploads the staged directory as a whole.
+Staged once end to end with the fixed tt-model build: manifest pins `958acd6…`, tt_metal_version
+0.78.0.

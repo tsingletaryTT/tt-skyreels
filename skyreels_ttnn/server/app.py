@@ -15,8 +15,12 @@ TWO CONTRACTS THIS FILE HAS TO HONOUR (same as tt-animatediff)
 ----------------------------------------------------------------
 **1. Readiness is the lifespan.** tt-model-manager decides the server is up when uvicorn
 logs ``Application startup complete``, which it prints *after* ASGI lifespan startup
-returns. The device open, fabric configuration and weight load (15-30 min cold, 3.5B
-params across 4 Blackhole chips over PCIe) belong in the lifespan and nowhere else.
+returns. The device open, fabric configuration and weight load belong in the lifespan
+and nowhere else. Measured 2026-09-27 on the published v6 bundle (1.3B-param
+transformer across 4 Blackhole chips): a warm restart reaches ready in <= 19 s; a cold
+first start took ~30 min, almost all of it downloading ~28 GB of weights (fabric init
+~10 s, transformer-to-device ~10 s). The first request after a cold start then pays
+~24 s of kernel compile on top of a ~58 s generation.
 
 **2. Importing this module must not touch hardware.** ``verify`` lines in the manifest
 import the ASGI attribute at image-build time, on a machine with no card. Every ttnn /
@@ -25,9 +29,11 @@ models.tt_dit import is therefore inside a function, never at module scope.
 ENVIRONMENT, set by the launcher
 ---------------------------------
 ``MESH_DEVICE``          the SKU, e.g. ``P300x2`` — informational here
-``SKYREELS_MESH_SHAPE``  the resolved shape, e.g. ``2x2`` (manifest points
-                         ``runtime.mesh_shape_env`` at this name — the kind's default is
-                         FLUX.2's, which means nothing to this model)
+``SKYREELS_MESH_SHAPE``  the resolved shape, e.g. ``2x2`` (the v6 bundle manifest's
+                         ``env`` sets it; the kind's default name is FLUX.2's, which
+                         means nothing to this model)
+``TT_MODEL_WEIGHTS_REVISION``  weights revision override; unset -> the sha pinned in
+                         ``skyreels_ttnn.pipeline_skyreels.PINNED_WEIGHTS_REVISION``
 ``HF_MODEL``             the weights repo id, reported by ``/v1/models``
 
 ONE REQUEST AT A TIME
@@ -73,6 +79,13 @@ DEFAULT_NUM_FRAMES = 33
 DEFAULT_FPS = 24
 DEFAULT_GUIDANCE_SCALE = 6.0  # SkyReels recommended: 5-7
 
+#: Denoising steps when a request omits ``num_inference_steps``. It has always been 20
+#: (``git log -S``); earlier docs saying "8 steps" described runs that passed 8
+#: explicitly. Measured 2026-09-27: ~58 s wall per 33-frame clip at 20 steps vs ~54 s
+#: at 8 -- the TT denoise loop is only ~4 s of it (~0.21 s/step); the rest is the CPU
+#: text encoder + VAE, so fewer steps buys little.
+DEFAULT_NUM_INFERENCE_STEPS = 20
+
 
 class VideoGenerationRequest(BaseModel):
     """OpenAI-shaped video request, matching tt-animatediff's server contract and
@@ -88,7 +101,7 @@ class VideoGenerationRequest(BaseModel):
     # loop with a clear diffusers error, which is preferable to guessing at the full set
     # of legal values and rejecting some that would have worked.
     num_frames: int = Field(default=DEFAULT_NUM_FRAMES, ge=1, le=97)
-    num_inference_steps: int = Field(default=20, ge=1, le=100)
+    num_inference_steps: int = Field(default=DEFAULT_NUM_INFERENCE_STEPS, ge=1, le=100)
     guidance_scale: float = Field(default=DEFAULT_GUIDANCE_SCALE, ge=0.0, le=20.0)
     seed: int = 0
     #: Only b64_json is offered -- a URL response would need a file store this
