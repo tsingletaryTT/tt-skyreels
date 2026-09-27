@@ -249,3 +249,17 @@ gaps. Bump to 0.1.1.
   - a new `skyreels_ttnn-0.1.1` wheel;
   - `package-thin --weights-revision 958acd63685c7e632e4b194549f2a703e34bd98b`;
   - the same `kernel_patch/` + closure wheel as before (`ttnn==0.78.0`).
+
+## 2026-09-27 — the packaging recipe is now a checked-in, tested artifact
+
+Review on PR #1 pointed out that the packaging tests only checked a hand-copied snapshot of
+the published manifest, so a repackage could drift without any test failing. Worse, the
+recipe wasn't in the repo at all: the bundle's `requirements.txt` and `kernel_patch/` only
+existed in the published bundle, copied there by hand. Added `packaging/` (the pip pins, the
+three fabric kernel files, byte-identical to tt-metal v0.78.0, and `package-thin.sh` with every
+flag including `--weights-revision`). The tests now parse the script and requirements. Each
+new test was seen to fail by breaking the recipe (weights revision, mesh env, app target, wheel
+pin), then restored. The script only stages: `package-thin` cannot ship an extra directory, and
+`tt-model push` takes only v5.1 packages, so publishing uploads the staged directory as a whole.
+Staged once end to end with the fixed tt-model build: manifest pins `958acd6…`, tt_metal_version
+0.78.0.

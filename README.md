@@ -94,14 +94,17 @@ pip install -e ".[dev,serve]"
 pytest tests/ -q          # pure CPU, no card needed; never imports ttnn
 ```
 
-To rebuild the actual v6 thin bundle (needs a tt-model-manager checkout, a tt-metal
-source tree at v0.78.0 for the `models/tt_dit` closure, and real hardware to verify):
-build `skyreels-ttnn` from this repo's own `setup.py`, vendor `models/tt_dit` +
-`models/common/{utility_functions.py,device_utils.py,modules/tt_ccl.py}` into a second
-wheel, then `tt-model package-thin --kind tt-dit-server --app skyreels_ttnn.server.app:app
---models-wheel <both wheels> ...`. See [CLAUDE.md](CLAUDE.md)'s 2026-09-15 entry for the
-exact recipe, including the `kernel_patch/` workaround the published bundle needs for a
-real ttnn 0.78.0 PyPI wheel gap (three missing fabric kernel source files).
+To rebuild the actual v6 thin bundle, run [`packaging/package-thin.sh`](packaging/package-thin.sh).
+It is the one recipe, and it carries every flag, including the pinned
+`--weights-revision`. Everything it needs is in `packaging/`, except the second wheel,
+`tt-skyreels-models-closure`: tt-metal v0.78.0's `models/tt_dit` plus
+`models/common/{utility_functions.py,device_utils.py,modules/tt_ccl.py}`, passed as
+`CLOSURE_WHEEL`. `packaging/` holds the bundle's pip pins and the `kernel_patch/` for a ttnn
+0.78.0 PyPI wheel gap (three fabric kernel sources the wheel omits, byte-identical to tt-metal
+v0.78.0). The script only stages: verify the staged bundle on real hardware, then upload the
+staged directory as a whole, because `package-thin` alone cannot ship `kernel_patch/`. The
+tests parse this script and `packaging/requirements.txt`, so a pin or flag that drifts from the
+code fails CI.
 
 See [CLAUDE.md](CLAUDE.md) for the full bring-up log, including every bug found only by
 actually serving a generation on hardware (a module-scope `ttnn` import, missing

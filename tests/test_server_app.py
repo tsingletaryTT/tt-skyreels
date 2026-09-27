@@ -337,39 +337,92 @@ def test_an_unsupported_response_format_is_refused():
 #   are the two wheels, which this repo doesn't build as a unit.
 # * dropped: `kind == "tt-dit-server"`. It is a package-thin flag, and nothing in this
 #   repo carries it, so asserting it here would compare a literal to itself.
-# * kept, re-pointed at what v6 actually uses: the `--app` target (documented in
-#   README.md) resolves to the ASGI app; the env the published bundle sets parses to a
-#   supported mesh; the Gradio app opens that same mesh; the weights repo + pinned
-#   revision reach every from_pretrained call.
+# * kept, re-pointed at the recipe v6 actually runs, packaging/package-thin.sh: its `--app`
+#   resolves to the ASGI app; its `--env` mesh is supported and matches the Gradio app;
+#   its weights repo + revision equal what the code loads; packaging/requirements.txt
+#   pins this repo's own version; the kernel patch its env names is shipped.
 
-#: What the published bundle's manifest.json sets (episod/tt-skyreels @ 69473ad,
-#: `env` and `deps.app`). Recorded by hand, not fetched: tests stay offline. If a
-#: repackage changes either one, update it here.
-PUBLISHED_V6_ENV = {"SKYREELS_MESH_SHAPE": "2x2"}
-PUBLISHED_V6_APP = "skyreels_ttnn.server.app:app"
+#: The one packaging recipe a repackage runs, and the pins it installs. Parsed rather than
+#: copied, so a flag or pin that drifts from the code fails here instead of shipping.
+PACKAGING = REPO_ROOT / "packaging"
 
 
-def test_the_readme_documents_the_app_target_the_bundle_uses():
-    """The README's package-thin recipe is how a repackage gets its --app flag, so it
-    must name the same target the published bundle runs."""
-    readme = (REPO_ROOT / "README.md").read_text()
-    assert f"--app {PUBLISHED_V6_APP}" in readme
+def _package_thin_flags():
+    """(flag, value) pairs of the package-thin call in packaging/package-thin.sh."""
+    import shlex
+
+    script = (PACKAGING / "package-thin.sh").read_text()
+    call = script[script.index('package-thin \\'):].split("\n\n", 1)[0]
+    tokens = shlex.split(call.replace("\\\n", " "), comments=True)[1:]
+    flags = []
+    for i, tok in enumerate(tokens):
+        if tok.startswith("--"):
+            nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+            flags.append((tok, None if nxt is None or nxt.startswith("--") else nxt))
+    return flags
+
+
+def _flag(name):
+    values = [v for f, v in _package_thin_flags() if f == name]
+    assert len(values) == 1, f"{name} must appear exactly once in package-thin.sh"
+    return values[0]
+
+
+def _bundle_env():
+    return dict(v.split("=", 1) for f, v in _package_thin_flags() if f == "--env")
+
+
+def _script_var(name):
+    import re
+
+    m = re.search(rf"^{name}=(\S+)$", (PACKAGING / "package-thin.sh").read_text(), re.M)
+    assert m, f"{name}= not found in package-thin.sh"
+    return m.group(1)
+
+
+def test_the_readme_points_at_the_packaging_recipe():
+    assert "packaging/package-thin.sh" in (REPO_ROOT / "README.md").read_text()
 
 
 def test_the_bundle_app_target_resolves_to_the_asgi_app():
     import importlib
 
-    module_path, attr = PUBLISHED_V6_APP.split(":", 1)
+    module_path, attr = _flag("--app").split(":", 1)
     assert getattr(importlib.import_module(module_path), attr) is app
 
 
-def test_the_bundle_env_names_the_variable_the_server_reads():
-    assert MESH_SHAPE_ENV in PUBLISHED_V6_ENV
-
-
 def test_the_bundle_env_mesh_is_one_this_server_supports():
-    assert mesh_shape_from_env(PUBLISHED_V6_ENV) == (2, 2)
+    env = _bundle_env()
+    assert mesh_shape_from_env(env) == (2, 2)
     assert (2, 2) in SUPPORTED_MESH_SHAPES
+    assert int(_flag("--device-count")) == 4
+
+
+def test_the_bundle_pins_the_same_weights_the_code_loads():
+    from skyreels_ttnn import pipeline_skyreels as p
+
+    assert _flag("--weights") == p.SkyReelsPipeline.CHECKPOINT
+    assert _flag("--weights-revision") == "$WEIGHTS_REVISION"
+    assert _script_var("WEIGHTS_REVISION") == p.PINNED_WEIGHTS_REVISION
+
+
+def test_the_bundle_requirements_pin_this_repo_version():
+    import re
+
+    setup = (REPO_ROOT / "setup.py").read_text()
+    version = re.search(r'version="([^"]+)"', setup).group(1)
+    reqs = (PACKAGING / "requirements.txt").read_text()
+    assert re.search(rf"^skyreels-ttnn=={re.escape(version)}\s", reqs, re.M)
+
+
+def test_the_kernel_patch_the_bundle_points_at_is_shipped():
+    assert _bundle_env()["TT_METAL_KERNEL_PATH"] == "$HERE/kernel_patch"
+    kernels = PACKAGING / "kernel_patch/tt_metal/fabric/impl/kernels/edm_fabric"
+    assert sorted(p.name for p in kernels.glob("*.cpp")) == [
+        "fabric_router_mux_extension.cpp",
+        "fabric_router_relay_extension.cpp",
+        "fabric_router_udm_mux_extension.cpp",
+    ]
 
 
 # ---- weights: one repo, one pinned revision, every component ------------------------------
@@ -518,7 +571,7 @@ def test_the_gradio_apps_frame_count_default_matches_the_servers():
 def test_the_gradio_app_opens_the_same_mesh_the_bundle_declares():
     import app as gradio_app
 
-    assert gradio_app.MESH_SHAPE == mesh_shape_from_env(PUBLISHED_V6_ENV)
+    assert gradio_app.MESH_SHAPE == mesh_shape_from_env(_bundle_env())
 
 
 def test_the_disco_manifest_parses_and_points_at_the_gradio_app():
