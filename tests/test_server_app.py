@@ -40,12 +40,6 @@ from skyreels_ttnn.server.app import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MANIFEST_PATH = REPO_ROOT / "tt_model_package.yaml"
-
-
-@pytest.fixture
-def manifest():
-    return yaml.safe_load(MANIFEST_PATH.read_text())
 
 
 def test_importing_the_server_does_not_import_ttnn():
@@ -331,47 +325,161 @@ def test_an_unsupported_response_format_is_refused():
         del app.state.engine
 
 
-# ---- the manifest agrees with the code it describes ---------------------------------------
+# ---- the packaging contract agrees with the code it describes ----------------------------
+#
+# These tests used to read tt_model_package.yaml, the v5.1 CONTAINER manifest. That file
+# was deleted on 2026-09-15 when the package moved to a v6 thin bundle, which
+# `tt-model package-thin` builds from CLI flags; nothing in this repo is the manifest
+# any more. So the 8 tests that read it errored. Here is what happened to each property:
+#
+# * dropped, v5.1-only concepts with no v6 equivalent: `source.extra_code` shipping
+#   skyreels_ttnn, and the `source.code` allowlist containing models/tt_dit. In v6 those
+#   are the two wheels, which this repo doesn't build as a unit.
+# * dropped: `kind == "tt-dit-server"`. It is a package-thin flag, and nothing in this
+#   repo carries it, so asserting it here would compare a literal to itself.
+# * kept, re-pointed at what v6 actually uses: the `--app` target (documented in
+#   README.md) resolves to the ASGI app; the env the published bundle sets parses to a
+#   supported mesh; the Gradio app opens that same mesh; the weights repo + pinned
+#   revision reach every from_pretrained call.
+
+#: What the published bundle's manifest.json sets (episod/tt-skyreels @ 69473ad,
+#: `env` and `deps.app`). Recorded by hand, not fetched: tests stay offline. If a
+#: repackage changes either one, update it here.
+PUBLISHED_V6_ENV = {"SKYREELS_MESH_SHAPE": "2x2"}
+PUBLISHED_V6_APP = "skyreels_ttnn.server.app:app"
 
 
-def test_the_manifest_points_at_the_asgi_attribute_that_exists(manifest):
-    module_path, attr = manifest["runtime"]["app"].split(":", 1)
-    assert module_path == "skyreels_ttnn.server.app"
-    assert attr == "app"
+def test_the_readme_documents_the_app_target_the_bundle_uses():
+    """The README's package-thin recipe is how a repackage gets its --app flag, so it
+    must name the same target the published bundle runs."""
+    readme = (REPO_ROOT / "README.md").read_text()
+    assert f"--app {PUBLISHED_V6_APP}" in readme
 
 
-def test_the_manifest_ships_the_package_that_holds_the_server(manifest):
-    paths = [e["paths"] for e in manifest["source"]["extra_code"]]
-    flat = [p for group in paths for p in group]
-    assert "skyreels_ttnn" in flat
+def test_the_bundle_app_target_resolves_to_the_asgi_app():
+    import importlib
+
+    module_path, attr = PUBLISHED_V6_APP.split(":", 1)
+    assert getattr(importlib.import_module(module_path), attr) is app
 
 
-def test_the_manifest_mesh_shape_env_matches_the_name_the_server_reads(manifest):
-    assert manifest["runtime"]["mesh_shape_env"] == MESH_SHAPE_ENV
+def test_the_bundle_env_names_the_variable_the_server_reads():
+    assert MESH_SHAPE_ENV in PUBLISHED_V6_ENV
 
 
-def test_the_manifest_declares_the_diffusion_kind(manifest):
-    assert manifest["kind"] == "tt-dit-server"
+def test_the_bundle_env_mesh_is_one_this_server_supports():
+    assert mesh_shape_from_env(PUBLISHED_V6_ENV) == (2, 2)
+    assert (2, 2) in SUPPORTED_MESH_SHAPES
 
 
-def test_the_manifest_declares_a_mesh_this_server_actually_supports(manifest):
-    from skyreels_ttnn.server.app import mesh_shape_from_env as parse
-
-    # Mirrors tt_kernel.container_manifest.MESH_DEVICE_PRESETS: "QB2" -> (2, 2).
-    assert manifest["serve"]["mesh_device"] == "QB2"
-    assert parse({MESH_SHAPE_ENV: "2x2"}) in SUPPORTED_MESH_SHAPES
+# ---- weights: one repo, one pinned revision, every component ------------------------------
 
 
-def test_the_allowlist_ships_the_tt_dit_subtree_the_pipeline_imports(manifest):
-    code = manifest["source"]["code"]
-    assert "models/tt_dit" in code
-    assert "models/common" in code
+def test_the_weights_pin_is_a_full_sha():
+    from skyreels_ttnn.pipeline_skyreels import PINNED_WEIGHTS_REVISION
+
+    assert len(PINNED_WEIGHTS_REVISION) == 40
+    int(PINNED_WEIGHTS_REVISION, 16)
 
 
-def test_the_manifest_declares_the_weights_the_served_path_actually_loads(manifest):
-    from skyreels_ttnn.pipeline_skyreels import SkyReelsPipeline
+@pytest.mark.parametrize(
+    "env_value, expected",
+    [(None, "PIN"), ("", "PIN"), ("abc123" * 6 + "abcd", "abc123" * 6 + "abcd")],
+)
+def test_weights_revision_env_override(monkeypatch, env_value, expected):
+    """Unset and exported-but-empty both mean "use the pin"; anything else wins."""
+    from skyreels_ttnn import pipeline_skyreels as p
 
-    assert manifest["weights"] == SkyReelsPipeline.CHECKPOINT
+    if env_value is None:
+        monkeypatch.delenv(p.WEIGHTS_REVISION_ENV, raising=False)
+    else:
+        monkeypatch.setenv(p.WEIGHTS_REVISION_ENV, env_value)
+    want = p.PINNED_WEIGHTS_REVISION if expected == "PIN" else expected
+    assert p.weights_revision() == want
+
+
+def test_a_local_checkpoint_dir_gets_no_revision(tmp_path):
+    from skyreels_ttnn.pipeline_skyreels import _revision_kwargs
+
+    assert _revision_kwargs(str(tmp_path)) == {}
+
+
+def test_a_foreign_hub_repo_does_not_get_this_repos_sha(monkeypatch):
+    from skyreels_ttnn import pipeline_skyreels as p
+
+    monkeypatch.delenv(p.WEIGHTS_REVISION_ENV, raising=False)
+    assert p._revision_kwargs("someone/else") == {}
+
+
+def test_every_component_loads_from_the_pinned_revision(monkeypatch):
+    """THE WIRING, not the helper: stub every from_pretrained that
+    _build_diffusers_pipeline and load_skyreels_weights reach, run them, and check each
+    call carried the pinned repo AND revision. A pin that exists as a constant but
+    never reaches a from_pretrained call is the failure this catches. The stubs keep
+    this offline and CPU-only; no weights are downloaded and ttnn is never imported."""
+    import diffusers
+    import diffusers.models.transformers.transformer_skyreels_v2 as tsv2
+    import diffusers.pipelines.skyreels_v2.pipeline_skyreels_v2 as psv2
+    import transformers
+
+    from skyreels_ttnn import pipeline_skyreels as p
+
+    monkeypatch.delenv(p.WEIGHTS_REVISION_ENV, raising=False)
+    calls = []
+
+    class _Loaded:
+        config = {}
+
+        def state_dict(self):
+            return {}
+
+    def recorder(name):
+        def from_pretrained(checkpoint, **kwargs):
+            calls.append((name, checkpoint, kwargs.get("subfolder"), kwargs.get("revision")))
+            return _Loaded()
+
+        return from_pretrained
+
+    for name, owner in [
+        ("tokenizer", transformers.AutoTokenizer),
+        ("text_encoder", transformers.UMT5EncoderModel),
+        ("vae", diffusers.AutoencoderKLWan),
+        ("scheduler", diffusers.UniPCMultistepScheduler),
+        ("transformer", tsv2.SkyReelsV2Transformer3DModel),
+    ]:
+        monkeypatch.setattr(owner, "from_pretrained", staticmethod(recorder(name)))
+    # The pipeline constructor and the flow_shift re-config would type-check the
+    # stubs; replace them too. Neither loads weights.
+    monkeypatch.setattr(psv2, "SkyReelsV2Pipeline", lambda **kw: type("P", (), {"scheduler": _Loaded()})())
+    monkeypatch.setattr(diffusers.UniPCMultistepScheduler, "from_config", staticmethod(lambda *a, **k: None))
+
+    p._build_diffusers_pipeline(p.SkyReelsPipeline.CHECKPOINT, ttnn_transformer=object())
+
+    # The transformer load is a method on SkyReelsTTNNTransformer; call it unbound
+    # with a stand-in self whose ttnn_model accepts the (empty) state dict.
+    class _FakeTTNN:
+        def load_torch_state_dict(self, sd, strict):
+            return type("R", (), {"missing_keys": [], "unexpected_keys": []})()
+
+    fake_self = type("S", (), {"ttnn_model": _FakeTTNN()})()
+    p.SkyReelsTTNNTransformer.load_skyreels_weights(fake_self, p.SkyReelsPipeline.CHECKPOINT)
+
+    assert {c[0] for c in calls} == {"tokenizer", "text_encoder", "vae", "scheduler", "transformer"}
+    for name, checkpoint, subfolder, revision in calls:
+        assert checkpoint == "Skywork/SkyReels-V2-DF-1.3B-540P-Diffusers", name
+        assert revision == p.PINNED_WEIGHTS_REVISION, name
+
+
+def test_the_request_default_step_count_is_20_and_the_gradio_ui_agrees():
+    """Docs once claimed an "8 step" default; the code default has always been 20.
+    Pin the server constant, the request model and the UI slider together."""
+    import app as gradio_app
+
+    from skyreels_ttnn.server.app import DEFAULT_NUM_INFERENCE_STEPS
+
+    assert DEFAULT_NUM_INFERENCE_STEPS == 20
+    assert VideoGenerationRequest(prompt="x").num_inference_steps == DEFAULT_NUM_INFERENCE_STEPS
+    assert gradio_app.steps_slider.value == DEFAULT_NUM_INFERENCE_STEPS
 
 
 # ---- the Gradio app and its discolike manifest --------------------------------------------
@@ -407,11 +515,10 @@ def test_the_gradio_apps_frame_count_default_matches_the_servers():
     assert gradio_app.frames_num.value == DEFAULT_NUM_FRAMES
 
 
-def test_the_gradio_app_opens_the_same_mesh_the_manifest_declares(manifest):
+def test_the_gradio_app_opens_the_same_mesh_the_bundle_declares():
     import app as gradio_app
 
-    assert gradio_app.MESH_SHAPE == (2, 2)
-    assert manifest["serve"]["mesh_device"] == "QB2"  # QB2 -> (2, 2), see container_manifest.py
+    assert gradio_app.MESH_SHAPE == mesh_shape_from_env(PUBLISHED_V6_ENV)
 
 
 def test_the_disco_manifest_parses_and_points_at_the_gradio_app():

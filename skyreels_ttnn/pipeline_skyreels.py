@@ -20,6 +20,23 @@
 # SkyReels-only keys (fps_embedding.*, fps_projection.*) are silently dropped
 # via load_torch_state_dict(..., strict=False).
 #
+# KNOWN DIVERGENCES FROM THE UPSTREAM MODEL (documented, deliberately not fixed here)
+# ----------------------------------------------------------------------------------
+# 1. Not diffusion forcing. The checkpoint's own model_index.json names
+#    `SkyReelsV2DiffusionForcingPipeline` (the "DF" in the repo name: per-frame noise
+#    levels, autoregressive long-video extension). `_build_diffusers_pipeline` below
+#    builds the plain `SkyReelsV2Pipeline` instead: every frame shares one timestep,
+#    one fixed-length clip per request, no AR extension. The DF pipeline was never
+#    exercised on this port.
+# 2. No fps conditioning. The checkpoint's transformer config sets
+#    `inject_sample_info: true`, so the reference model adds
+#    `fps_projection(fps_embedding(fps))` to its timestep projection. The TTNN WAN
+#    transformer has no such term: those 5 weight tensors are dropped (the
+#    "Ignored SkyReels-only keys (5)" log line) and `forward()` ignores its `fps`
+#    argument. Output therefore differs from the reference by construction.
+# Neither divergence has been measured against a reference (no PCC, no side-by-side);
+# the only quality evidence is visual inspection of generated clips.
+#
 # Origin: ported from tt-local-generator's tt_dit hotpatch
 #   (patches/tt_dit/pipelines/skyreels_v2/pipeline_skyreels.py), which bind-mounted this
 #   file into ~/tt-metal/models/tt_dit/pipelines/skyreels_v2/ at container start. This repo
@@ -31,6 +48,7 @@
 # Import path in this repo: skyreels_ttnn.pipeline_skyreels
 #
 # Hardware target: Tenstorrent Blackhole, 1×4 mesh (P150X4) or 2×2 mesh (P300X2).
+#   Only the 2×2 mesh (QB2: 2x p300c) has been run; the published bundle ships only it.
 #   sp_axis=0, tp_axis=1.  num_links=2 (same as WAN pipeline Blackhole config).
 #
 # Server integration:
@@ -59,6 +77,50 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
+
+# ---------------------------------------------------------------------------
+# Weights revision pin
+# ---------------------------------------------------------------------------
+
+#: Upstream commit of Skywork/SkyReels-V2-DF-1.3B-540P-Diffusers this port was served
+#: and verified against (HF API `sha` on 2026-09-27; upstream lastModified 2025-08-11,
+#: long before the 2026-09-09 bring-up, so it is the revision every verified run used).
+PINNED_WEIGHTS_REVISION = "958acd63685c7e632e4b194549f2a703e34bd98b"
+
+#: Exported by tt-model-manager's v6 run.sh from the bundle manifest's weights
+#: revision, so manifest and code cannot disagree. Unset or empty -> the pin above.
+WEIGHTS_REVISION_ENV = "TT_MODEL_WEIGHTS_REVISION"
+
+
+def weights_revision() -> str:
+    """`$TT_MODEL_WEIGHTS_REVISION` if set and non-empty, else the pinned sha.
+    `or` rather than a `.get()` default so an exported-but-empty variable can't turn
+    into `revision=""`."""
+    return os.environ.get(WEIGHTS_REVISION_ENV) or PINNED_WEIGHTS_REVISION
+
+
+def _revision_kwargs(checkpoint_name: str) -> dict:
+    """The `revision=` kwarg for one `from_pretrained` call on `checkpoint_name`.
+
+    * A local directory (e.g. `MODEL_WEIGHTS_DIR=/path/to/snapshot`) has no revisions:
+      return `{}` so nothing pretends to pin it.
+    * The canonical repo (`SkyReelsPipeline.CHECKPOINT`): the pin (or env override).
+    * Any other hub id: only an explicit `$TT_MODEL_WEIGHTS_REVISION` applies. The
+      pinned sha belongs to the canonical repo and would 404 elsewhere, so without an
+      override that repo's default branch is used, as before.
+
+    Every weights load in this module goes through this helper, so all four
+    components (transformer, text encoder, VAE, scheduler; plus the tokenizer) come
+    from ONE revision. Mixing revisions across subfolders is the failure a pin exists
+    to prevent. `tests/test_server_app.py` asserts that wiring.
+    """
+    if os.path.isdir(checkpoint_name):
+        return {}
+    if checkpoint_name == SkyReelsPipeline.CHECKPOINT:
+        return {"revision": weights_revision()}
+    override = os.environ.get(WEIGHTS_REVISION_ENV)
+    return {"revision": override} if override else {}
+
 
 if TYPE_CHECKING:
     import ttnn
@@ -227,6 +289,7 @@ class SkyReelsTTNNTransformer(torch.nn.Module):
             checkpoint_name,
             subfolder="transformer",
             torch_dtype=torch.bfloat16,
+            **_revision_kwargs(checkpoint_name),
         )
         state_dict = torch_model.state_dict()
         del torch_model  # free CPU memory before TTNN loading
@@ -470,13 +533,18 @@ def _build_diffusers_pipeline(checkpoint_name: str, ttnn_transformer):
     from diffusers.pipelines.skyreels_v2.pipeline_skyreels_v2 import SkyReelsV2Pipeline
     from transformers import AutoTokenizer, UMT5EncoderModel
 
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint_name, subfolder="tokenizer")
+    # Every component loads through _revision_kwargs, so all of them resolve to the
+    # same pinned upstream commit (see its docstring).
+    rev = _revision_kwargs(checkpoint_name)
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint_name, subfolder="tokenizer", **rev)
 
     # Text encoder runs on CPU in bfloat16
     text_encoder = UMT5EncoderModel.from_pretrained(
         checkpoint_name,
         subfolder="text_encoder",
         torch_dtype=torch.bfloat16,
+        **rev,
     )
 
     # VAE runs on CPU in float32 for numerical stability
@@ -484,14 +552,18 @@ def _build_diffusers_pipeline(checkpoint_name: str, ttnn_transformer):
         checkpoint_name,
         subfolder="vae",
         torch_dtype=torch.float32,
+        **rev,
     )
 
     scheduler = UniPCMultistepScheduler.from_pretrained(
-        checkpoint_name, subfolder="scheduler"
+        checkpoint_name, subfolder="scheduler", **rev
     )
 
     # Build pipeline directly rather than via from_pretrained so we can supply
     # our custom transformer without triggering ModelMixin type checks.
+    # NOTE: this is the plain T2V SkyReelsV2Pipeline, NOT the checkpoint's own
+    # SkyReelsV2DiffusionForcingPipeline -- see "KNOWN DIVERGENCES" at the top of
+    # this file.
     pipe = SkyReelsV2Pipeline(
         tokenizer=tokenizer,
         text_encoder=text_encoder,

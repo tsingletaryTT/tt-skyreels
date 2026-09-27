@@ -34,7 +34,8 @@ import gradio as gr
 # (python app.py) rather than through an installed package.
 sys.path.insert(0, str(Path(__file__).parent))
 
-#: The only mesh this app opens. Matches tt_model_package.yaml's serve.mesh_device: QB2.
+#: The only mesh this app opens. Matches the published v6 bundle's mesh topology (QB2 =
+#: 2x2; the bundle env sets SKYREELS_MESH_SHAPE=2x2).
 MESH_SHAPE = (2, 2)
 
 NEG_DEFAULT = "blurry, low quality, distorted, text, watermark, deformed"
